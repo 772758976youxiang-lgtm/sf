@@ -1,6 +1,7 @@
 import asyncio
+import sys
 
-from mcp import Client
+from mcp import Client, StdioServerParameters
 import pytest
 
 from sf_express_mcp.config import Config
@@ -19,6 +20,16 @@ def test_mcp_lists_exactly_two_tools_without_credentials(monkeypatch):
             assert {tool.name for tool in result.tools} == {"sf_create_order", "sf_track_shipment"}
             order = next(tool for tool in result.tools if tool.name == "sf_create_order")
             assert order.input_schema["properties"]["order"]
+
+    asyncio.run(check())
+
+
+def test_stdio_process_lists_two_tools():
+    async def check():
+        params = StdioServerParameters(command=sys.executable, args=["-m", "sf_express_mcp.server"])
+        async with Client(params) as client:
+            result = await client.list_tools()
+            assert {tool.name for tool in result.tools} == {"sf_create_order", "sf_track_shipment"}
 
     asyncio.run(check())
 
