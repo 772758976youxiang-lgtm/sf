@@ -60,6 +60,8 @@ class SfApiClient:
                 response = await client.post(self.endpoint, data=form)
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code >= 500:
+                raise SfTransportError(f"HTTP {exc.response.status_code}") from exc
             raise SfApiError("http", str(exc.response.status_code), "SF HTTP request failed") from exc
         except httpx.RequestError as exc:
             raise SfTransportError(type(exc).__name__) from exc
@@ -77,6 +79,8 @@ class SfApiClient:
             if inner.get("success") is not True:
                 raise SfApiError("business", str(inner.get("errorCode", "UNKNOWN")), str(inner.get("errorMsg", "SF business request failed")))
             result = inner.get("msgData")
+            if isinstance(result, str):
+                result = json.loads(result)
             return result if isinstance(result, dict) else {"data": result}
         except (ValueError, TypeError) as exc:
             raise SfApiError("protocol", "INVALID_RESPONSE", "SF returned an invalid response") from exc
