@@ -1,13 +1,21 @@
 const orderForm = document.getElementById("orderForm");
 const trackForm = document.getElementById("trackForm");
+const credentialsForm = document.getElementById("credentialsForm");
+const credentialsMessage = document.getElementById("credentialsMessage");
 const orderResult = document.getElementById("orderResult");
 const trackResult = document.getElementById("trackResult");
 const dialog = document.getElementById("confirmDialog");
 const orderSubmit = document.getElementById("orderSubmit");
 let pendingOrder = null;
+let orderLocked = false;
+let sandboxAvailable = false;
 
 const orderId = document.getElementById("orderId");
-orderId.value = `SMOKE-${new Date().toISOString().slice(0,10).replaceAll("-", "")}-${Math.floor(Math.random() * 900000 + 100000)}`;
+
+function ensureOrderId() {
+  if (!orderId.value) orderId.value = `SMOKE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  return orderId.value;
+}
 
 function textNode(tag, className, value) {
   const element = document.createElement(tag);
@@ -36,7 +44,7 @@ function contact(data, prefix) {
 function buildOrder() {
   const data = new FormData(orderForm);
   const result = {
-    order_id: value(data, "order_id"),
+    order_id: ensureOrderId(),
     sender: contact(data, "sender"),
     recipient: contact(data, "recipient"),
     cargo: [{name: value(data, "cargo_name"), count: Number(value(data, "cargo_count") || 1)}],
@@ -54,7 +62,6 @@ function buildOrder() {
 function orderSummary(order) {
   const pay = {1: "寄方付", 2: "收方付", 3: "第三方付"}[order.pay_method] || order.pay_method;
   return [
-    `客户订单号：${order.order_id}`,
     `寄件人：${order.sender.name}  ${order.sender.mobile}`,
     `寄件地址：${order.sender.province} ${order.sender.city} ${order.sender.county || ""} ${order.sender.address}`,
     `收件人：${order.recipient.name}  ${order.recipient.mobile}`,
@@ -96,7 +103,8 @@ function baseResult(target, title, status, response) {
 function renderOrder(response) {
   const details = baseResult(orderResult, "下单结果", response.status, response);
   if (response.status === "created") {
-    orderResult.appendChild(textNode("p", "result-message", `客户订单号 ${response.order_id} 已提交。`));
+    orderResult.appendChild(textNode("p", "result-message", "测试订单已提交。"));
+    if (response.mapping_saved === false) orderResult.appendChild(textNode("p", "result-message", "本机保存订单号与运单号的对应关系失败，请自行记录。"));
     const list = textNode("div", "waybill-list", "");
     for (const number of response.waybill_numbers || []) list.appendChild(textNode("span", "waybill", number));
     orderResult.appendChild(list);
@@ -105,7 +113,7 @@ function renderOrder(response) {
       trackForm.elements.tracking_number.value = response.waybill_numbers[0];
     }
   } else if (response.status === "outcome_unknown") {
-    orderResult.appendChild(textNode("p", "result-message", "顺丰可能已收到订单，但查询结果仍不确定。请使用相同订单号核查，勿换号重复提交。"));
+    orderResult.appendChild(textNode("p", "result-message", "顺丰可能已收到订单，但结果仍不确定。订单号已自动填入查件表单，请先查询核实，勿重复提交。"));
   }
   orderResult.appendChild(details);
   orderResult.scrollIntoView({behavior: "smooth", block: "nearest"});
@@ -113,6 +121,7 @@ function renderOrder(response) {
 
 function renderTrack(response) {
   const details = baseResult(trackResult, "查件结果", response.status, response);
+  if (response.order_id) trackResult.appendChild(textNode("p", "result-message", `客户订单号：${response.order_id}`));
   if (response.status === "ok" || response.status === "no_events") {
     const label = response.waybill_number || response.tracking_number || "";
     trackResult.appendChild(textNode("p", "result-message", `${label} · ${response.events?.length || 0} 条轨迹`));
@@ -137,22 +146,68 @@ function renderTrack(response) {
 async function loadStatus() {
   const mode = document.getElementById("modeLabel");
   const credentials = document.getElementById("configLabel");
+  const signMode = document.getElementById("signModeLabel");
   try {
     const response = await fetch("/api/status", {cache: "no-store"});
     const status = await response.json();
     const sandbox = status.environment === "sandbox";
+    sandboxAvailable = sandbox;
     mode.textContent = sandbox ? "沙盒环境" : `当前环境：${status.environment}`;
     mode.className = sandbox ? "ready" : "warning";
-    credentials.textContent = status.credentials_configured ? "已配置" : "未配置";
+    credentials.textContent = status.credentials_configured ? "已填写（未验证）" : "未配置";
     credentials.className = status.credentials_configured ? "ready" : "warning";
-    orderSubmit.disabled = !sandbox;
+    signMode.textContent = status.sign_mode === "simple" ? "简易 MD5" : "标准 MD5";
+    orderSubmit.disabled = !sandbox || orderLocked;
     orderSubmit.title = sandbox ? "" : "网页端只允许沙盒下单";
   } catch {
     mode.textContent = "服务未连接";
     credentials.textContent = "状态未知";
+    signMode.textContent = "状态未知";
     orderSubmit.disabled = true;
   }
 }
+
+credentialsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!credentialsForm.reportValidity()) return;
+  const button = credentialsForm.querySelector('button[type="submit"]');
+  const data = new FormData(credentialsForm);
+  button.disabled = true;
+  credentialsMessage.textContent = "保存中…";
+  try {
+    const response = await postJson("/api/config", {
+      partner_id: value(data, "partner_id"),
+      checkword: value(data, "checkword"),
+      sign_mode: value(data, "sign_mode"),
+    });
+    credentialsMessage.textContent = response.error ? response.error.message : "已保存到当前服务，调用接口时才会验证";
+    if (!response.error) {
+      credentialsForm.reset();
+      await loadStatus();
+    }
+  } catch {
+    sandboxAvailable = false;
+    credentialsMessage.textContent = "本机服务请求失败";
+  } finally {
+    credentialsForm.elements.checkword.value = "";
+    button.disabled = false;
+  }
+});
+
+document.getElementById("clearCredentials").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const response = await postJson("/api/config", {action: "clear"});
+    credentialsMessage.textContent = response.error ? response.error.message : "网页配置已清除";
+    credentialsForm.reset();
+    await loadStatus();
+  } catch {
+    credentialsMessage.textContent = "本机服务请求失败";
+  } finally {
+    button.disabled = false;
+  }
+});
 
 orderForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -170,11 +225,23 @@ document.getElementById("confirmOrder").addEventListener("click", async () => {
   dialog.close();
   orderSubmit.disabled = true;
   try {
-    renderOrder(await postJson("/api/order", order));
+    const response = await postJson("/api/order", order);
+    renderOrder(response);
+    if (response.status === "created") {
+      orderForm.reset();
+      orderId.value = "";
+    } else if (response.status === "outcome_unknown") {
+      orderLocked = true;
+      trackForm.elements.tracking_type.value = "order";
+      trackForm.elements.tracking_number.value = order.order_id;
+    }
   } catch {
     renderOrder({status: "error", error: {code: "LOCAL_NETWORK", message: "本机服务请求失败"}});
+    orderLocked = true;
+    trackForm.elements.tracking_type.value = "order";
+    trackForm.elements.tracking_number.value = order.order_id;
   } finally {
-    orderSubmit.disabled = false;
+    orderSubmit.disabled = !sandboxAvailable || orderLocked;
   }
 });
 

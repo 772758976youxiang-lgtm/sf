@@ -23,8 +23,13 @@ class SfTransportError(SfApiError):
         super().__init__("transport", "NETWORK_ERROR", message)
 
 
-def digest(msg_data: str, timestamp: str, checkword: str) -> str:
-    encoded = quote_plus(msg_data + timestamp + checkword).encode("utf-8")
+def digest(msg_data: str, timestamp: str, checkword: str, *, sign_mode: str = "standard") -> str:
+    source = msg_data + timestamp + checkword
+    if sign_mode == "standard":
+        source = quote_plus(source)
+    elif sign_mode != "simple":
+        raise ValueError("SF_SIGN_MODE must be standard or simple")
+    encoded = source.encode("utf-8")
     return base64.b64encode(hashlib.md5(encoded).digest()).decode("ascii")
 
 
@@ -37,12 +42,14 @@ class SfApiClient:
         *,
         timeout: float = 10.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        sign_mode: str = "standard",
     ):
         self.partner_id = partner_id
         self.checkword = checkword
         self.endpoint = endpoint
         self.timeout = timeout
         self.transport = transport
+        self.sign_mode = sign_mode
 
     async def call(self, service_code: str, payload: dict) -> dict:
         msg_data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -53,7 +60,7 @@ class SfApiClient:
             "serviceCode": service_code,
             "timestamp": timestamp,
             "msgData": msg_data,
-            "msgDigest": digest(msg_data, timestamp, self.checkword),
+            "msgDigest": digest(msg_data, timestamp, self.checkword, sign_mode=self.sign_mode),
         }
         try:
             async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:

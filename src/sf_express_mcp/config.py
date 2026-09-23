@@ -19,16 +19,20 @@ class Config:
     endpoint: str
     timeout: float
     can_create_order: bool
+    sign_mode: str
 
     @classmethod
-    def from_env(cls) -> "Config":
-        partner_id = os.getenv("SF_PARTNER_ID", "").strip()
-        checkword = os.getenv("SF_CHECK_WORD", "").strip()
+    def from_env(cls, *, partner_id: str | None = None, checkword: str | None = None, sign_mode: str | None = None) -> "Config":
+        partner_id = (partner_id if partner_id is not None else os.getenv("SF_PARTNER_ID", "")).strip()
+        checkword = (checkword if checkword is not None else os.getenv("SF_CHECK_WORD", "")).strip()
         if not partner_id or not checkword:
             raise ValueError("Set SF_PARTNER_ID and SF_CHECK_WORD before calling SF tools")
         environment = os.getenv("SF_ENV", "sandbox").strip().lower()
         if environment not in ENDPOINTS:
             raise ValueError("SF_ENV must be sandbox or production")
+        sign_mode = (sign_mode if sign_mode is not None else os.getenv("SF_SIGN_MODE", "standard")).strip().lower()
+        if sign_mode not in ("standard", "simple"):
+            raise ValueError("SF_SIGN_MODE must be standard or simple")
         timeout = float(os.getenv("SF_HTTP_TIMEOUT", "10"))
         if timeout <= 0:
             raise ValueError("SF_HTTP_TIMEOUT must be positive")
@@ -45,4 +49,5 @@ class Config:
             endpoint=endpoint,
             timeout=timeout,
             can_create_order=environment == "sandbox" or allow_production,
+            sign_mode=sign_mode,
         )

@@ -23,7 +23,7 @@
         <div>
           <p class="eyebrow">SF EXPRESS · API SMOKE TEST</p>
           <h1 id="page-title">下单与查件，一页验证。</h1>
-          <p class="hero-copy">填写测试数据，查看顺丰接口的真实响应。页面只连接本机服务，顾客编码和校验码留在 Python 进程中。</p>
+          <p class="hero-copy">填写测试数据，查看顺丰接口的真实响应。页面只连接本机服务，顾客编码和校验码可在下方配置。</p>
         </div>
         <div class="hero-graphic" aria-hidden="true">
           <div class="route-line"></div>
@@ -42,10 +42,37 @@
           <span class="status-label">接口凭据</span>
           <strong id="configLabel">读取中…</strong>
         </div>
+        <div class="status-item">
+          <span class="status-label">签名方式</span>
+          <strong id="signModeLabel">读取中…</strong>
+        </div>
         <div class="status-item status-note">
           <span class="status-icon" aria-hidden="true">⌁</span>
-          <span>网页下单仅允许沙盒 · 不会保存表单数据</span>
+          <span>网页下单仅允许沙盒 · 凭据只保存在当前 Python 进程内</span>
         </div>
+      </section>
+
+      <section class="panel credentials-panel" aria-labelledby="credentials-heading">
+        <div class="panel-heading compact-heading">
+          <div class="panel-number">00</div>
+          <div>
+            <p class="section-kicker">LOCAL CREDENTIALS</p>
+            <h2 id="credentials-heading">顺丰接口配置</h2>
+            <p class="section-description">在此输入顾客编码和校验码。签名方式应与顺丰测试平台的选择一致；重启服务后需重新填写。</p>
+          </div>
+        </div>
+        <form id="credentialsForm" autocomplete="off">
+          <div class="field-grid three-col">
+            <label class="field">顾客编码 <span class="required">*</span><input name="partner_id" required maxlength="128" autocomplete="off" spellcheck="false" placeholder="请输入顾客编码"></label>
+            <label class="field">校验码 <span class="required">*</span><input name="checkword" type="password" required maxlength="256" autocomplete="new-password" spellcheck="false" placeholder="请输入校验码"></label>
+            <label class="field">数字签名方式<select name="sign_mode"><option value="simple">简易 MD5（不做 URL 编码）</option><option value="standard">标准 MD5（先做 URL 编码）</option></select></label>
+          </div>
+          <div class="credentials-actions">
+            <button type="submit" class="button button-primary">保存到当前服务</button>
+            <button id="clearCredentials" type="button" class="button button-ghost">清除网页配置</button>
+            <span id="credentialsMessage" role="status" aria-live="polite"></span>
+          </div>
+        </form>
       </section>
 
       <div class="workspace">
@@ -60,17 +87,9 @@
           </div>
 
           <form id="orderForm" novalidate>
-            <div class="form-section section-first">
-              <div class="form-section-title"><span>基础信息</span><span class="form-line"></span></div>
-              <div class="field-grid two-col">
-                <label class="field field-wide">客户订单号 <span class="required">*</span>
-                  <input name="order_id" id="orderId" type="text" maxlength="64" required autocomplete="off" placeholder="例如 SHOP-20260923-0001">
-                  <small>重试时请保持同一订单号，避免重复下单</small>
-                </label>
-              </div>
-            </div>
+            <input name="order_id" id="orderId" type="hidden">
 
-            <div class="form-section">
+            <div class="form-section section-first">
               <div class="form-section-title"><span>寄件人</span><span class="form-line"></span></div>
               <div class="field-grid two-col">
                 <label class="field">姓名 <span class="required">*</span><input name="sender_name" required placeholder="寄件人姓名" autocomplete="off"></label>
@@ -128,7 +147,7 @@
               <div class="panel-number">02</div>
               <div><p class="section-kicker">TRACK SHIPMENT</p><h2 id="track-heading">查询物流轨迹</h2></div>
             </div>
-            <p class="section-description">可按顺丰运单号，或本接入账号的客户订单号查询。</p>
+            <p class="section-description">可按顺丰运单号，或本接入账号的客户订单号查询。本机下单生成的运单可在 24 小时内显示对应订单号。</p>
             <form id="trackForm">
               <div class="field-grid">
                 <label class="field">查询方式<select name="tracking_type"><option value="waybill">顺丰运单号</option><option value="order">客户订单号</option></select></label>
@@ -142,7 +161,7 @@
             <span class="guide-icon" aria-hidden="true">i</span>
             <h3>测试前检查</h3>
             <ol>
-              <li>配置沙盒顾客编码和校验码</li>
+              <li>在页面顶部配置沙盒顾客编码和校验码</li>
               <li>确认应用已关联下单、查件接口</li>
               <li>使用唯一订单号提交测试件</li>
               <li>用返回的运单号查询轨迹</li>

@@ -6,11 +6,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
 import os
+from threading import Lock
 
 from pydantic import ValidationError
 
 from .config import Config
 from .models import CreateOrderInput, TrackInput
+from .order_map import find_order_id, remember_created_order
 from .service import create_order, track_shipment
 from .sf_api import SfApiClient, SfApiError
 
@@ -25,16 +27,59 @@ def _error(status: int, code: str, message: str, *, fields: list[str] | None = N
     return status, {"status": "error", "error": detail}
 
 
+def _sf_error(exc: SfApiError, operation: str) -> tuple[int, dict]:
+    if exc.kind == "platform" and exc.code == "A1006":
+        message = "顺丰数字签名无效。请核对沙盒顾客编码与校验码是否属于同一应用；若无误，请检查签名配置。"
+    elif exc.kind == "platform" and exc.code == "A1004":
+        message = f"当前顾客编码没有{operation}接口权限。请在顺丰开放平台的应用 API 列表中关联该接口，并确认使用沙盒环境。"
+    else:
+        message = "顺丰请求失败，请检查错误码"
+    return _error(502, exc.code, message)
+
+
 class SmokeApi:
+    def __init__(self) -> None:
+        self._credentials: tuple[str, str, str] | None = None
+        self._credentials_lock = Lock()
+
+    def _saved_credentials(self) -> tuple[str, str, str] | None:
+        with self._credentials_lock:
+            return self._credentials
+
     def status(self) -> dict:
+        saved = self._saved_credentials()
         return {
             "environment": os.getenv("SF_ENV", "sandbox").strip().lower(),
-            "credentials_configured": bool(os.getenv("SF_PARTNER_ID", "").strip() and os.getenv("SF_CHECK_WORD", "").strip()),
+            "credentials_configured": bool(saved or (os.getenv("SF_PARTNER_ID", "").strip() and os.getenv("SF_CHECK_WORD", "").strip())),
+            "sign_mode": saved[2] if saved else os.getenv("SF_SIGN_MODE", "standard").strip().lower(),
         }
+
+    def configure(self, payload: dict) -> tuple[int, dict]:
+        if payload.get("action") == "clear":
+            with self._credentials_lock:
+                self._credentials = None
+            return 200, self.status()
+        partner_id = payload.get("partner_id")
+        checkword = payload.get("checkword")
+        sign_mode = payload.get("sign_mode", "simple")
+        if (not isinstance(partner_id, str) or not isinstance(checkword, str)
+                or not 1 <= len(partner_id.strip()) <= 128
+                or not 1 <= len(checkword.strip()) <= 256
+                or sign_mode not in ("standard", "simple")):
+            return _error(400, "INVALID_CONFIG", "请输入顾客编码、校验码并选择签名方式")
+        with self._credentials_lock:
+            self._credentials = (partner_id.strip(), checkword.strip(), sign_mode)
+        return 200, self.status()
+
+    def _config(self) -> Config:
+        saved = self._saved_credentials()
+        if saved:
+            return Config.from_env(partner_id=saved[0], checkword=saved[1], sign_mode=saved[2])
+        return Config.from_env()
 
     @staticmethod
     def _client(config: Config) -> SfApiClient:
-        return SfApiClient(config.partner_id, config.checkword, config.endpoint, timeout=config.timeout)
+        return SfApiClient(config.partner_id, config.checkword, config.endpoint, timeout=config.timeout, sign_mode=config.sign_mode)
 
     async def order(self, payload: dict) -> tuple[int, dict]:
         if os.getenv("SF_ENV", "sandbox").strip().lower() != "sandbox":
@@ -45,12 +90,12 @@ class SmokeApi:
             fields = [".".join(str(part) for part in item["loc"]) for item in exc.errors(include_input=False, include_context=False)]
             return _error(400, "INVALID_INPUT", "Check the order fields", fields=fields)
         try:
-            config = Config.from_env()
-            return 200, await create_order(self._client(config), order)
+            config = self._config()
+            return 200, remember_created_order(config, await create_order(self._client(config), order))
         except ValueError:
             return _error(503, "INVALID_CONFIG", "请检查本机配置的顺丰顾客编码、校验码及环境变量")
         except SfApiError as exc:
-            return _error(502, exc.code, "SF request failed; check the error code")
+            return _sf_error(exc, "下订单")
 
     async def track(self, payload: dict) -> tuple[int, dict]:
         try:
@@ -59,12 +104,19 @@ class SmokeApi:
             fields = [".".join(str(part) for part in item["loc"]) for item in exc.errors(include_input=False, include_context=False)]
             return _error(400, "INVALID_INPUT", "Check the tracking fields", fields=fields)
         try:
-            config = Config.from_env()
-            return 200, await track_shipment(self._client(config), query)
+            config = self._config()
+            order_id = find_order_id(config, query.tracking_type, query.tracking_number)
+            result = await track_shipment(self._client(config), query)
+            if order_id:
+                result["order_id"] = order_id
+            return 200, result
         except ValueError:
             return _error(503, "INVALID_CONFIG", "请检查本机配置的顺丰顾客编码、校验码及环境变量")
         except SfApiError as exc:
-            return _error(502, exc.code, "SF request failed; check the error code")
+            status, result = _sf_error(exc, "路由查询")
+            if order_id:
+                result["order_id"] = order_id
+            return status, result
 
 
 def make_server(port: int = 8765, api: SmokeApi | None = None) -> ThreadingHTTPServer:
@@ -106,7 +158,7 @@ def make_server(port: int = 8765, api: SmokeApi | None = None) -> ThreadingHTTPS
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            if self.path not in ("/api/order", "/api/track"):
+            if self.path not in ("/api/order", "/api/track", "/api/config"):
                 self._json(*_error(404, "NOT_FOUND", "Endpoint not found"))
                 return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -135,8 +187,11 @@ def make_server(port: int = 8765, api: SmokeApi | None = None) -> ThreadingHTTPS
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                 self._json(*_error(400, "INVALID_JSON", "Send a JSON object"))
                 return
-            operation = smoke_api.order if self.path == "/api/order" else smoke_api.track
-            self._json(*asyncio.run(operation(payload)))
+            if self.path == "/api/config":
+                self._json(*smoke_api.configure(payload))
+            else:
+                operation = smoke_api.order if self.path == "/api/order" else smoke_api.track
+                self._json(*asyncio.run(operation(payload)))
 
         def log_message(self, format: str, *args) -> None:
             return
