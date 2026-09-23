@@ -6,9 +6,12 @@ const orderResult = document.getElementById("orderResult");
 const trackResult = document.getElementById("trackResult");
 const dialog = document.getElementById("confirmDialog");
 const orderSubmit = document.getElementById("orderSubmit");
+const environmentSelect = document.getElementById("environmentSelect");
 let pendingOrder = null;
+let pendingEnvironment = null;
 let orderLocked = false;
-let sandboxAvailable = false;
+let serviceAvailable = false;
+let currentEnvironment = "sandbox";
 
 const orderId = document.getElementById("orderId");
 
@@ -103,7 +106,7 @@ function baseResult(target, title, status, response) {
 function renderOrder(response) {
   const details = baseResult(orderResult, "下单结果", response.status, response);
   if (response.status === "created") {
-    orderResult.appendChild(textNode("p", "result-message", "测试订单已提交。"));
+    orderResult.appendChild(textNode("p", "result-message", "订单已提交。"));
     if (response.mapping_saved === false) orderResult.appendChild(textNode("p", "result-message", "本机保存订单号与运单号的对应关系失败，请自行记录。"));
     const list = textNode("div", "waybill-list", "");
     for (const number of response.waybill_numbers || []) list.appendChild(textNode("span", "waybill", number));
@@ -150,22 +153,43 @@ async function loadStatus() {
   try {
     const response = await fetch("/api/status", {cache: "no-store"});
     const status = await response.json();
-    const sandbox = status.environment === "sandbox";
-    sandboxAvailable = sandbox;
-    mode.textContent = sandbox ? "沙盒环境" : `当前环境：${status.environment}`;
-    mode.className = sandbox ? "ready" : "warning";
+    currentEnvironment = status.environment;
+    serviceAvailable = true;
+    environmentSelect.value = currentEnvironment;
+    credentialsForm.elements.sign_mode.value = status.sign_mode;
+    const production = currentEnvironment === "production";
+    mode.textContent = production ? "生产环境" : "沙盒环境";
+    mode.className = production ? "warning" : "ready";
     credentials.textContent = status.credentials_configured ? "已填写（未验证）" : "未配置";
     credentials.className = status.credentials_configured ? "ready" : "warning";
     signMode.textContent = status.sign_mode === "simple" ? "简易 MD5" : "标准 MD5";
-    orderSubmit.disabled = !sandbox || orderLocked;
-    orderSubmit.title = sandbox ? "" : "网页端只允许沙盒下单";
+    document.getElementById("orderEnvironmentHint").textContent = production
+      ? "提交将创建顺丰生产环境的真实订单" : "提交将调用顺丰沙盒下单接口";
+    orderSubmit.disabled = orderLocked;
+    orderSubmit.title = "";
   } catch {
+    serviceAvailable = false;
     mode.textContent = "服务未连接";
     credentials.textContent = "状态未知";
     signMode.textContent = "状态未知";
     orderSubmit.disabled = true;
   }
 }
+
+environmentSelect.addEventListener("change", async () => {
+  const environment = environmentSelect.value;
+  credentialsForm.elements.partner_id.value = "";
+  credentialsForm.elements.checkword.value = "";
+  credentialsMessage.textContent = "切换中…";
+  try {
+    const response = await postJson("/api/config", {action: "select", environment});
+    credentialsMessage.textContent = response.error ? response.error.message : "已切换环境；请核对该环境的接口凭据";
+    await loadStatus();
+  } catch {
+    credentialsMessage.textContent = "本机服务请求失败";
+    await loadStatus();
+  }
+});
 
 credentialsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -179,6 +203,7 @@ credentialsForm.addEventListener("submit", async (event) => {
       partner_id: value(data, "partner_id"),
       checkword: value(data, "checkword"),
       sign_mode: value(data, "sign_mode"),
+      environment: value(data, "environment"),
     });
     credentialsMessage.textContent = response.error ? response.error.message : "已保存到当前服务，调用接口时才会验证";
     if (!response.error) {
@@ -186,7 +211,7 @@ credentialsForm.addEventListener("submit", async (event) => {
       await loadStatus();
     }
   } catch {
-    sandboxAvailable = false;
+    serviceAvailable = false;
     credentialsMessage.textContent = "本机服务请求失败";
   } finally {
     credentialsForm.elements.checkword.value = "";
@@ -212,7 +237,14 @@ document.getElementById("clearCredentials").addEventListener("click", async (eve
 orderForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!orderForm.reportValidity()) return;
+  if (!serviceAvailable) return;
   pendingOrder = buildOrder();
+  pendingEnvironment = currentEnvironment;
+  const production = pendingEnvironment === "production";
+  document.getElementById("confirmTitle").textContent = production ? "确认生产订单" : "确认沙盒订单";
+  document.getElementById("confirmDescription").textContent = production
+    ? "请核对寄收件信息。确认后会向顺丰生产环境提交真实订单。"
+    : "请核对寄收件信息。确认后将向顺丰沙盒提交一次下单请求。";
   document.getElementById("orderSummary").textContent = orderSummary(pendingOrder);
   dialog.showModal();
 });
@@ -221,11 +253,17 @@ document.getElementById("cancelOrder").addEventListener("click", () => dialog.cl
 document.getElementById("confirmOrder").addEventListener("click", async () => {
   if (!pendingOrder) return;
   const order = pendingOrder;
+  const environment = pendingEnvironment;
   pendingOrder = null;
+  pendingEnvironment = null;
   dialog.close();
   orderSubmit.disabled = true;
   try {
-    const response = await postJson("/api/order", order);
+    const response = await postJson("/api/order", {
+      ...order,
+      environment,
+      confirm_production: environment === "production",
+    });
     renderOrder(response);
     if (response.status === "created") {
       orderForm.reset();
@@ -241,7 +279,7 @@ document.getElementById("confirmOrder").addEventListener("click", async () => {
     trackForm.elements.tracking_type.value = "order";
     trackForm.elements.tracking_number.value = order.order_id;
   } finally {
-    orderSubmit.disabled = !sandboxAvailable || orderLocked;
+    orderSubmit.disabled = !serviceAvailable || orderLocked;
   }
 });
 

@@ -48,7 +48,7 @@
         </div>
         <div class="status-item status-note">
           <span class="status-icon" aria-hidden="true">⌁</span>
-          <span>网页下单仅允许沙盒 · 凭据只保存在当前 Python 进程内</span>
+          <span>生产环境下单会创建真实订单 · 凭据只保存在当前 Python 进程内</span>
         </div>
       </section>
 
@@ -58,11 +58,12 @@
           <div>
             <p class="section-kicker">LOCAL CREDENTIALS</p>
             <h2 id="credentials-heading">顺丰接口配置</h2>
-            <p class="section-description">在此输入顾客编码和校验码。签名方式应与顺丰测试平台的选择一致；重启服务后需重新填写。</p>
+            <p class="section-description">先选择运行环境，再填写该环境的顾客编码和校验码。两套凭据分别保存在当前服务内；重启后需重新填写。</p>
           </div>
         </div>
         <form id="credentialsForm" autocomplete="off">
-          <div class="field-grid three-col">
+          <div class="field-grid credentials-grid">
+            <label class="field">运行环境<select name="environment" id="environmentSelect"><option value="sandbox">沙盒环境</option><option value="production">生产环境</option></select></label>
             <label class="field">顾客编码 <span class="required">*</span><input name="partner_id" required maxlength="128" autocomplete="off" spellcheck="false" placeholder="请输入顾客编码"></label>
             <label class="field">校验码 <span class="required">*</span><input name="checkword" type="password" required maxlength="256" autocomplete="new-password" spellcheck="false" placeholder="请输入校验码"></label>
             <label class="field">数字签名方式<select name="sign_mode"><option value="simple">简易 MD5（不做 URL 编码）</option><option value="standard">标准 MD5（先做 URL 编码）</option></select></label>
@@ -81,8 +82,8 @@
             <div class="panel-number">01</div>
             <div>
               <p class="section-kicker">CREATE ORDER</p>
-              <h2 id="order-heading">创建测试订单</h2>
-              <p class="section-description">提交前会再次显示订单摘要。请使用沙盒允许的测试资料。</p>
+              <h2 id="order-heading">创建订单</h2>
+              <p class="section-description">提交前会再次显示订单摘要。生产环境会创建真实订单。</p>
             </div>
           </div>
 
@@ -93,7 +94,7 @@
               <div class="form-section-title"><span>寄件人</span><span class="form-line"></span></div>
               <div class="field-grid two-col">
                 <label class="field">姓名 <span class="required">*</span><input name="sender_name" required placeholder="寄件人姓名" autocomplete="off"></label>
-                <label class="field">手机号 <span class="required">*</span><input name="sender_mobile" required inputmode="tel" placeholder="用于沙盒测试的号码" autocomplete="off"></label>
+                <label class="field">手机号 <span class="required">*</span><input name="sender_mobile" required inputmode="tel" placeholder="寄件人手机号" autocomplete="off"></label>
                 <label class="field">省 <span class="required">*</span><input name="sender_province" required placeholder="广东省" autocomplete="off"></label>
                 <label class="field">市 <span class="required">*</span><input name="sender_city" required placeholder="深圳市" autocomplete="off"></label>
                 <label class="field">区 / 县<input name="sender_county" placeholder="福田区" autocomplete="off"></label>
@@ -105,7 +106,7 @@
               <div class="form-section-title"><span>收件人</span><span class="form-line"></span></div>
               <div class="field-grid two-col">
                 <label class="field">姓名 <span class="required">*</span><input name="recipient_name" required placeholder="收件人姓名" autocomplete="off"></label>
-                <label class="field">手机号 <span class="required">*</span><input name="recipient_mobile" required inputmode="tel" placeholder="用于沙盒测试的号码" autocomplete="off"></label>
+                <label class="field">手机号 <span class="required">*</span><input name="recipient_mobile" required inputmode="tel" placeholder="收件人手机号" autocomplete="off"></label>
                 <label class="field">省 <span class="required">*</span><input name="recipient_province" required placeholder="上海市" autocomplete="off"></label>
                 <label class="field">市 <span class="required">*</span><input name="recipient_city" required placeholder="上海市" autocomplete="off"></label>
                 <label class="field">区 / 县<input name="recipient_county" placeholder="浦东新区" autocomplete="off"></label>
@@ -136,7 +137,7 @@
 
             <div class="form-actions">
               <button id="orderSubmit" type="submit" class="button button-primary">核对并提交订单 <span aria-hidden="true">↗</span></button>
-              <span>提交将调用顺丰沙盒下单接口</span>
+              <span id="orderEnvironmentHint">提交将调用顺丰沙盒下单接口</span>
             </div>
           </form>
         </section>
@@ -161,12 +162,12 @@
             <span class="guide-icon" aria-hidden="true">i</span>
             <h3>测试前检查</h3>
             <ol>
-              <li>在页面顶部配置沙盒顾客编码和校验码</li>
+              <li>选择环境并配置对应的顾客编码和校验码</li>
               <li>确认应用已关联下单、查件接口</li>
-              <li>使用唯一订单号提交测试件</li>
+              <li>核对信息后提交订单</li>
               <li>用返回的运单号查询轨迹</li>
             </ol>
-            <p>沙盒订单没有真实运输节点时，轨迹为空是正常情况。</p>
+            <p>沙盒订单没有真实运输节点时，轨迹为空是正常情况。生产环境会创建真实订单。</p>
           </section>
         </aside>
       </div>
@@ -182,7 +183,7 @@
 
   <dialog id="confirmDialog" class="confirm-dialog" aria-labelledby="confirmTitle">
     <div class="dialog-top"><span class="dialog-icon">!</span><h2 id="confirmTitle">确认沙盒订单</h2></div>
-    <p>请核对寄收件信息。确认后将向顺丰沙盒提交一次下单请求。</p>
+    <p id="confirmDescription">请核对寄收件信息。确认后将向顺丰沙盒提交一次下单请求。</p>
     <pre id="orderSummary"></pre>
     <div class="dialog-actions"><button id="cancelOrder" type="button" class="button button-ghost">返回修改</button><button id="confirmOrder" type="button" class="button button-primary">确认提交</button></div>
   </dialog>

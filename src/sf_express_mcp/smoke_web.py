@@ -1,4 +1,4 @@
-"""Local-only HTTP page for sandbox smoke testing."""
+"""Local-only HTTP page for SF smoke testing."""
 
 import argparse
 import asyncio
@@ -10,7 +10,7 @@ from threading import Lock
 
 from pydantic import ValidationError
 
-from .config import Config
+from .config import Config, ENDPOINTS
 from .models import CreateOrderInput, TrackInput
 from .order_map import find_order_id, remember_created_order
 from .service import create_order, track_shipment
@@ -27,11 +27,12 @@ def _error(status: int, code: str, message: str, *, fields: list[str] | None = N
     return status, {"status": "error", "error": detail}
 
 
-def _sf_error(exc: SfApiError, operation: str) -> tuple[int, dict]:
+def _sf_error(exc: SfApiError, operation: str, environment: str) -> tuple[int, dict]:
+    environment_label = "生产" if environment == "production" else "沙盒"
     if exc.kind == "platform" and exc.code == "A1006":
-        message = "顺丰数字签名无效。请核对沙盒顾客编码与校验码是否属于同一应用；若无误，请检查签名配置。"
+        message = f"顺丰数字签名无效。请核对{environment_label}顾客编码与校验码是否属于同一应用；若无误，请检查签名配置。"
     elif exc.kind == "platform" and exc.code == "A1004":
-        message = f"当前顾客编码没有{operation}接口权限。请在顺丰开放平台的应用 API 列表中关联该接口，并确认使用沙盒环境。"
+        message = f"当前顾客编码没有{operation}接口权限。请在顺丰开放平台的应用 API 列表中关联该接口，并确认使用{environment_label}环境。"
     else:
         message = "顺丰请求失败，请检查错误码"
     return _error(502, exc.code, message)
@@ -39,25 +40,38 @@ def _sf_error(exc: SfApiError, operation: str) -> tuple[int, dict]:
 
 class SmokeApi:
     def __init__(self) -> None:
-        self._credentials: tuple[str, str, str] | None = None
+        configured = os.getenv("SF_ENV", "sandbox").strip().lower()
+        self._environment = configured if configured in ENDPOINTS else "sandbox"
+        self._credentials: dict[str, tuple[str, str, str]] = {}
         self._credentials_lock = Lock()
 
-    def _saved_credentials(self) -> tuple[str, str, str] | None:
+    def _selection(self) -> tuple[str, tuple[str, str, str] | None]:
         with self._credentials_lock:
-            return self._credentials
+            return self._environment, self._credentials.get(self._environment)
 
     def status(self) -> dict:
-        saved = self._saved_credentials()
+        environment, saved = self._selection()
+        process_environment = os.getenv("SF_ENV", "sandbox").strip().lower()
+        inherited = environment == process_environment
         return {
-            "environment": os.getenv("SF_ENV", "sandbox").strip().lower(),
-            "credentials_configured": bool(saved or (os.getenv("SF_PARTNER_ID", "").strip() and os.getenv("SF_CHECK_WORD", "").strip())),
-            "sign_mode": saved[2] if saved else os.getenv("SF_SIGN_MODE", "standard").strip().lower(),
+            "environment": environment,
+            "credentials_configured": bool(saved or (inherited and os.getenv("SF_PARTNER_ID", "").strip() and os.getenv("SF_CHECK_WORD", "").strip())),
+            "sign_mode": saved[2] if saved else os.getenv("SF_SIGN_MODE", "standard").strip().lower() if inherited else "simple",
         }
 
     def configure(self, payload: dict) -> tuple[int, dict]:
+        environment = payload.get("environment")
+        if environment is not None and environment not in ENDPOINTS:
+            return _error(400, "INVALID_ENVIRONMENT", "请选择沙盒或生产环境")
+        if payload.get("action") == "select":
+            if environment is None:
+                return _error(400, "INVALID_ENVIRONMENT", "请选择沙盒或生产环境")
+            with self._credentials_lock:
+                self._environment = environment
+            return 200, self.status()
         if payload.get("action") == "clear":
             with self._credentials_lock:
-                self._credentials = None
+                self._credentials.pop(self._environment, None)
             return 200, self.status()
         partner_id = payload.get("partner_id")
         checkword = payload.get("checkword")
@@ -68,22 +82,30 @@ class SmokeApi:
                 or sign_mode not in ("standard", "simple")):
             return _error(400, "INVALID_CONFIG", "请输入顾客编码、校验码并选择签名方式")
         with self._credentials_lock:
-            self._credentials = (partner_id.strip(), checkword.strip(), sign_mode)
+            selected = environment or self._environment
+            self._credentials[selected] = (partner_id.strip(), checkword.strip(), sign_mode)
+            self._environment = selected
         return 200, self.status()
 
     def _config(self) -> Config:
-        saved = self._saved_credentials()
+        environment, saved = self._selection()
         if saved:
-            return Config.from_env(partner_id=saved[0], checkword=saved[1], sign_mode=saved[2])
-        return Config.from_env()
+            return Config.from_env(partner_id=saved[0], checkword=saved[1], sign_mode=saved[2],
+                                   environment=environment, allow_production_orders=True)
+        if environment != os.getenv("SF_ENV", "sandbox").strip().lower():
+            raise ValueError("Credentials are not configured for the selected environment")
+        return Config.from_env(environment=environment, allow_production_orders=True)
 
     @staticmethod
     def _client(config: Config) -> SfApiClient:
         return SfApiClient(config.partner_id, config.checkword, config.endpoint, timeout=config.timeout, sign_mode=config.sign_mode)
 
     async def order(self, payload: dict) -> tuple[int, dict]:
-        if os.getenv("SF_ENV", "sandbox").strip().lower() != "sandbox":
-            return _error(403, "SANDBOX_ONLY", "The smoke page only creates sandbox orders")
+        environment, _ = self._selection()
+        if payload.get("environment") not in (None, environment):
+            return _error(409, "ENVIRONMENT_CHANGED", "运行环境已切换，请重新核对订单")
+        if environment == "production" and (payload.get("environment") != "production" or payload.get("confirm_production") is not True):
+            return _error(403, "PRODUCTION_CONFIRMATION_REQUIRED", "生产下单需要先核对订单并明确确认")
         try:
             order = CreateOrderInput.model_validate(payload)
         except ValidationError as exc:
@@ -91,11 +113,13 @@ class SmokeApi:
             return _error(400, "INVALID_INPUT", "Check the order fields", fields=fields)
         try:
             config = self._config()
+            if config.environment != environment:
+                return _error(409, "ENVIRONMENT_CHANGED", "运行环境已切换，请重新核对订单")
             return 200, remember_created_order(config, await create_order(self._client(config), order))
         except ValueError:
             return _error(503, "INVALID_CONFIG", "请检查本机配置的顺丰顾客编码、校验码及环境变量")
         except SfApiError as exc:
-            return _sf_error(exc, "下订单")
+            return _sf_error(exc, "下订单", environment)
 
     async def track(self, payload: dict) -> tuple[int, dict]:
         try:
@@ -113,7 +137,7 @@ class SmokeApi:
         except ValueError:
             return _error(503, "INVALID_CONFIG", "请检查本机配置的顺丰顾客编码、校验码及环境变量")
         except SfApiError as exc:
-            status, result = _sf_error(exc, "路由查询")
+            status, result = _sf_error(exc, "路由查询", config.environment)
             if order_id:
                 result["order_id"] = order_id
             return status, result

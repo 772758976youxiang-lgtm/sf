@@ -52,6 +52,7 @@ def test_home_and_assets_are_served_without_cache():
     assert css.status_code == 200
     assert script.status_code == 200
     assert 'id="credentialsForm"' in home.text
+    assert 'id="environmentSelect"' in home.text
     assert '<input name="order_id" id="orderId" type="hidden">' in home.text
     assert '客户订单号 <span class="required">' not in home.text
 
@@ -117,15 +118,73 @@ def test_missing_credentials_return_localized_configuration_error(monkeypatch):
     assert "本机配置" in response.json()["error"]["message"]
 
 
-def test_production_order_is_blocked_before_sf_call(monkeypatch):
-    monkeypatch.setenv("SF_ENV", "production")
+def test_production_order_requires_explicit_confirmation(monkeypatch):
+    monkeypatch.setenv("SF_ENV", "sandbox")
     monkeypatch.setenv("SF_PARTNER_ID", "partner")
     monkeypatch.setenv("SF_CHECK_WORD", "secret")
-    monkeypatch.setenv("SF_ALLOW_PRODUCTION_ORDERS", "true")
     with local_server() as url:
-        response = httpx.post(f"{url}/api/order", json={})
+        selected = httpx.post(f"{url}/api/config", json={"action": "select", "environment": "production"})
+        response = httpx.post(f"{url}/api/order", json={"environment": "production"})
+    assert selected.status_code == 200
+    assert selected.json()["credentials_configured"] is False
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "SANDBOX_ONLY"
+    assert response.json()["error"]["code"] == "PRODUCTION_CONFIRMATION_REQUIRED"
+
+
+def test_environment_switch_uses_separate_credentials_and_endpoint(monkeypatch):
+    monkeypatch.delenv("SF_PARTNER_ID", raising=False)
+    monkeypatch.delenv("SF_CHECK_WORD", raising=False)
+    monkeypatch.delenv("SF_API_URL", raising=False)
+    monkeypatch.setenv("SF_ENV", "sandbox")
+    seen = []
+
+    async def fake_track(client, query):
+        seen.append((client.partner_id, client.checkword, client.endpoint))
+        return {"status": "no_events", "events": [], "latest": None}
+
+    monkeypatch.setattr("sf_express_mcp.smoke_web.track_shipment", fake_track)
+    with local_server() as url:
+        httpx.post(f"{url}/api/config", json={"partner_id": "sandbox-partner", "checkword": "sandbox-secret", "environment": "sandbox"})
+        httpx.post(f"{url}/api/track", json={"tracking_type": "waybill", "tracking_number": "SF123"})
+        switched = httpx.post(f"{url}/api/config", json={"action": "select", "environment": "production"})
+        missing = httpx.post(f"{url}/api/track", json={"tracking_type": "waybill", "tracking_number": "SF123"})
+        httpx.post(f"{url}/api/config", json={"partner_id": "production-partner", "checkword": "production-secret", "environment": "production"})
+        httpx.post(f"{url}/api/track", json={"tracking_type": "waybill", "tracking_number": "SF123"})
+        httpx.post(f"{url}/api/config", json={"action": "select", "environment": "sandbox"})
+        restored = httpx.get(f"{url}/api/status")
+        httpx.post(f"{url}/api/track", json={"tracking_type": "waybill", "tracking_number": "SF123"})
+    assert switched.json()["credentials_configured"] is False
+    assert missing.status_code == 503
+    assert restored.json()["credentials_configured"] is True
+    assert seen == [
+        ("sandbox-partner", "sandbox-secret", "https://sfapi-sbox.sf-express.com/std/service"),
+        ("production-partner", "production-secret", "https://bspgw.sf-express.com/std/service"),
+        ("sandbox-partner", "sandbox-secret", "https://sfapi-sbox.sf-express.com/std/service"),
+    ]
+
+
+def test_confirmed_production_order_uses_production_credentials(monkeypatch):
+    monkeypatch.delenv("SF_PARTNER_ID", raising=False)
+    monkeypatch.delenv("SF_CHECK_WORD", raising=False)
+    monkeypatch.setenv("SF_ENV", "sandbox")
+    seen = {}
+
+    async def fake_create(client, order):
+        seen.update(partner_id=client.partner_id, endpoint=client.endpoint, order_id=order.order_id)
+        return {"status": "created", "order_id": order.order_id, "waybill_numbers": ["SF999"]}
+
+    monkeypatch.setattr("sf_express_mcp.smoke_web.create_order", fake_create)
+    order = {
+        "order_id": "PROD-1", "environment": "production", "confirm_production": True,
+        "sender": {"name": "A", "mobile": "13800000000", "province": "广东省", "city": "深圳市", "address": "测试路1号"},
+        "recipient": {"name": "B", "mobile": "13900000000", "province": "上海市", "city": "上海市", "address": "测试路2号"},
+        "cargo": [{"name": "文件"}],
+    }
+    with local_server() as url:
+        httpx.post(f"{url}/api/config", json={"partner_id": "production-partner", "checkword": "production-secret", "environment": "production"})
+        response = httpx.post(f"{url}/api/order", json=order)
+    assert response.status_code == 200
+    assert seen == {"partner_id": "production-partner", "endpoint": "https://bspgw.sf-express.com/std/service", "order_id": "PROD-1"}
 
 
 def test_tracking_delegates_validated_input(monkeypatch):
