@@ -14,9 +14,13 @@ test = ["pytest>=8,<9"]
 
 [project.scripts]
 sf-express-mcp = "sf_express_mcp.server:main"
+sf-express-smoke = "sf_express_mcp.smoke_web:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sf_express_mcp = ["web/*.html", "web/*.css", "web/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

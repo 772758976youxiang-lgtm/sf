@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>顺丰接口冒烟测试</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">SF</span>
+        <span class="brand-name">顺丰接口实验台</span>
+      </div>
+      <span class="local-tag"><span class="pulse-dot"></span> LOCAL TEST CONSOLE</span>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">SF EXPRESS · API SMOKE TEST</p>
+          <h1 id="page-title">下单与查件，一页验证。</h1>
+          <p class="hero-copy">填写测试数据，查看顺丰接口的真实响应。页面只连接本机服务，顾客编码和校验码留在 Python 进程中。</p>
+        </div>
+        <div class="hero-graphic" aria-hidden="true">
+          <div class="route-line"></div>
+          <span class="graphic-point point-a">01<span>订单</span></span>
+          <span class="graphic-point point-b">02<span>揽收</span></span>
+          <span class="graphic-point point-c">03<span>签收</span></span>
+        </div>
+      </section>
+
+      <section class="status-strip" aria-label="当前接入状态">
+        <div class="status-item">
+          <span class="status-label">运行环境</span>
+          <strong id="modeLabel">读取中…</strong>
+        </div>
+        <div class="status-item">
+          <span class="status-label">接口凭据</span>
+          <strong id="configLabel">读取中…</strong>
+        </div>
+        <div class="status-item status-note">
+          <span class="status-icon" aria-hidden="true">⌁</span>
+          <span>网页下单仅允许沙盒 · 不会保存表单数据</span>
+        </div>
+      </section>
+
+      <div class="workspace">
+        <section class="panel order-panel" aria-labelledby="order-heading">
+          <div class="panel-heading">
+            <div class="panel-number">01</div>
+            <div>
+              <p class="section-kicker">CREATE ORDER</p>
+              <h2 id="order-heading">创建测试订单</h2>
+              <p class="section-description">提交前会再次显示订单摘要。请使用沙盒允许的测试资料。</p>
+            </div>
+          </div>
+
+          <form id="orderForm" novalidate>
+            <div class="form-section section-first">
+              <div class="form-section-title"><span>基础信息</span><span class="form-line"></span></div>
+              <div class="field-grid two-col">
+                <label class="field field-wide">客户订单号 <span class="required">*</span>
+                  <input name="order_id" id="orderId" type="text" maxlength="64" required autocomplete="off" placeholder="例如 SHOP-20260923-0001">
+                  <small>重试时请保持同一订单号，避免重复下单</small>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <div class="form-section-title"><span>寄件人</span><span class="form-line"></span></div>
+              <div class="field-grid two-col">
+                <label class="field">姓名 <span class="required">*</span><input name="sender_name" required placeholder="寄件人姓名" autocomplete="off"></label>
+                <label class="field">手机号 <span class="required">*</span><input name="sender_mobile" required inputmode="tel" placeholder="用于沙盒测试的号码" autocomplete="off"></label>
+                <label class="field">省 <span class="required">*</span><input name="sender_province" required placeholder="广东省" autocomplete="off"></label>
+                <label class="field">市 <span class="required">*</span><input name="sender_city" required placeholder="深圳市" autocomplete="off"></label>
+                <label class="field">区 / 县<input name="sender_county" placeholder="福田区" autocomplete="off"></label>
+                <label class="field field-wide">详细地址 <span class="required">*</span><input name="sender_address" required placeholder="街道、楼栋、门牌号" autocomplete="off"></label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <div class="form-section-title"><span>收件人</span><span class="form-line"></span></div>
+              <div class="field-grid two-col">
+                <label class="field">姓名 <span class="required">*</span><input name="recipient_name" required placeholder="收件人姓名" autocomplete="off"></label>
+                <label class="field">手机号 <span class="required">*</span><input name="recipient_mobile" required inputmode="tel" placeholder="用于沙盒测试的号码" autocomplete="off"></label>
+                <label class="field">省 <span class="required">*</span><input name="recipient_province" required placeholder="上海市" autocomplete="off"></label>
+                <label class="field">市 <span class="required">*</span><input name="recipient_city" required placeholder="上海市" autocomplete="off"></label>
+                <label class="field">区 / 县<input name="recipient_county" placeholder="浦东新区" autocomplete="off"></label>
+                <label class="field field-wide">详细地址 <span class="required">*</span><input name="recipient_address" required placeholder="街道、楼栋、门牌号" autocomplete="off"></label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <div class="form-section-title"><span>托寄物与服务</span><span class="form-line"></span></div>
+              <div class="field-grid three-col">
+                <label class="field">托寄物名称 <span class="required">*</span><input name="cargo_name" required placeholder="例如 文件" autocomplete="off"></label>
+                <label class="field">数量<input name="cargo_count" type="number" min="1" value="1"></label>
+                <label class="field">包裹数<input name="parcel_qty" type="number" min="1" value="1"></label>
+                <label class="field">总重量（kg）<input name="total_weight_kg" type="number" min="0.001" step="0.001" placeholder="可选"></label>
+                <label class="field">付款方式<select name="pay_method"><option value="1">寄方付</option><option value="2">收方付</option><option value="3">第三方付</option></select></label>
+                <label class="field">快件产品编码<input name="express_type_id" type="number" min="1" placeholder="可选"></label>
+              </div>
+              <details class="advanced">
+                <summary>更多选项 <span>月结卡号、揽收时间与备注</span></summary>
+                <div class="field-grid two-col advanced-fields">
+                  <label class="field">月结卡号<input name="monthly_card" placeholder="可选" autocomplete="off"></label>
+                  <label class="field">期望揽收时间<input name="pickup_time" placeholder="YYYY-MM-DD HH:MM:SS" autocomplete="off"></label>
+                  <label class="field field-wide">备注<input name="remark" maxlength="100" placeholder="可选" autocomplete="off"></label>
+                </div>
+              </details>
+              <label class="check-row"><input name="request_pickup" type="checkbox"><span>通知顺丰收派员上门揽收</span></label>
+            </div>
+
+            <div class="form-actions">
+              <button id="orderSubmit" type="submit" class="button button-primary">核对并提交订单 <span aria-hidden="true">↗</span></button>
+              <span>提交将调用顺丰沙盒下单接口</span>
+            </div>
+          </form>
+        </section>
+
+        <aside class="side-stack">
+          <section class="panel track-panel" aria-labelledby="track-heading">
+            <div class="panel-heading compact-heading">
+              <div class="panel-number">02</div>
+              <div><p class="section-kicker">TRACK SHIPMENT</p><h2 id="track-heading">查询物流轨迹</h2></div>
+            </div>
+            <p class="section-description">可按顺丰运单号，或本接入账号的客户订单号查询。</p>
+            <form id="trackForm">
+              <div class="field-grid">
+                <label class="field">查询方式<select name="tracking_type"><option value="waybill">顺丰运单号</option><option value="order">客户订单号</option></select></label>
+                <label class="field">查询号 <span class="required">*</span><input name="tracking_number" required placeholder="输入运单号或客户订单号" autocomplete="off"></label>
+              </div>
+              <button type="submit" class="button button-dark">查询轨迹 <span aria-hidden="true">→</span></button>
+            </form>
+          </section>
+
+          <section class="guide-card" aria-label="测试说明">
+            <span class="guide-icon" aria-hidden="true">i</span>
+            <h3>测试前检查</h3>
+            <ol>
+              <li>配置沙盒顾客编码和校验码</li>
+              <li>确认应用已关联下单、查件接口</li>
+              <li>使用唯一订单号提交测试件</li>
+              <li>用返回的运单号查询轨迹</li>
+            </ol>
+            <p>沙盒订单没有真实运输节点时，轨迹为空是正常情况。</p>
+          </section>
+        </aside>
+      </div>
+
+      <section class="results" aria-label="接口结果">
+        <article id="orderResult" class="result-panel" hidden aria-live="polite"></article>
+        <article id="trackResult" class="result-panel" hidden aria-live="polite"></article>
+      </section>
+    </main>
+
+    <footer class="footer"><span>SF EXPRESS API · LOCAL SMOKE TEST</span><span>仅供开发与联调使用</span></footer>
+  </div>
+
+  <dialog id="confirmDialog" class="confirm-dialog" aria-labelledby="confirmTitle">
+    <div class="dialog-top"><span class="dialog-icon">!</span><h2 id="confirmTitle">确认沙盒订单</h2></div>
+    <p>请核对寄收件信息。确认后将向顺丰沙盒提交一次下单请求。</p>
+    <pre id="orderSummary"></pre>
+    <div class="dialog-actions"><button id="cancelOrder" type="button" class="button button-ghost">返回修改</button><button id="confirmOrder" type="button" class="button button-primary">确认提交</button></div>
+  </dialog>
+</body>
+</html>
