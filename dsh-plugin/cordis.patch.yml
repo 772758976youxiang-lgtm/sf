@@ -1,0 +1,60 @@
+- insert:
+    - id: sf-express-settings
+      name: '@local/dsh-sf-express'
+      config:
+        environment: sandbox
+        sandboxSignMode: simple
+        productionSignMode: simple
+    - id: preset-sf-express
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: sf-express
+        name: 顺丰速运
+        description: 基于极简模式，使用顺丰工具下单、查件和取消订单。
+        order: 10
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                你是顺丰速运业务助手。使用 sf_create_order、sf_track_shipment、sf_cancel_order 完成下单、查件和取消。
+                下单前核对寄件人、收件人、地址、托寄物、付款方式和是否上门揽收，并获得用户对本次订单的明确确认。
+                取消前核对客户订单号或运单号，并获得用户对本次取消的明确确认。生产环境的操作会影响真实订单。
+                不要猜测缺失的订单资料。下单或取消结果为 outcome_unknown 时不要自动重试，先向用户说明需要核实。
+                不要索取或输出顺丰校验码；凭据在 DSH 设置中的顺丰速运配置页管理。
+              complete: true
+              includeRuntimeContext: false
+          - id: persistent-shell
+            name: cordis:group
+            group: true
+            isolate:
+              terminals: true
+            config:
+              - id: pty
+                name: '@deepseek-ai/dsh-terminal'
+              - id: terminal-bash
+                name: '@deepseek-ai/dsh-terminal-bash'
+                disabled: !!js process.platform === 'win32'
+                config:
+                  timeoutMs: 300000
+              - id: persistent-bash
+                name: '@deepseek-ai/dsh-tool-bash-persistent'
+                disabled: !!js process.platform === 'win32'
+                config:
+                  timeoutMs: 300000
+              - id: terminal-pwsh
+                name: '@deepseek-ai/dsh-terminal-bash'
+                disabled: !!js process.platform !== 'win32'
+                config:
+                  shellDialect: pwsh
+                  timeoutMs: 300000
+              - id: persistent-pwsh
+                name: '@deepseek-ai/dsh-tool-pwsh-persistent'
+                disabled: !!js process.platform !== 'win32'
+                config:
+                  timeoutMs: 300000
+          - id: sf-tools
+            name: '@local/dsh-sf-express/tools'
+            config:
+              pythonPath: !!js process.env.SF_DSH_PYTHON ?? `${process.env.USERPROFILE}/Desktop/sf/.venv/Scripts/python.exe`
+              projectDir: !!js process.env.SF_DSH_PROJECT ?? `${process.env.USERPROFILE}/Desktop/sf`

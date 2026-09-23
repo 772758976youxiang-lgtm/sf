@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from .models import CreateOrderInput, TrackInput
+from .models import CancelOrderInput, CreateOrderInput, TrackInput
 from .sf_api import SfApiError, SfTransportError
 
 
@@ -91,3 +91,19 @@ async def track_shipment(client, query: TrackInput) -> dict:
         "events": events,
         "queried_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+async def cancel_order(client, request: CancelOrderInput) -> dict:
+    """Cancel by the customer's original order ID; never retry an uncertain update."""
+    try:
+        result = await client.call("EXP_RECE_UPDATE_ORDER", {"orderId": request.order_id, "dealType": 2})
+    except SfTransportError:
+        return {"status": "outcome_unknown", "order_id": request.order_id}
+    status = result.get("resStatus")
+    if result.get("orderId") not in (None, request.order_id):
+        return {"status": "outcome_unknown", "order_id": request.order_id}
+    if str(status) == "2":
+        return {"status": "cancelled", "order_id": request.order_id}
+    if str(status) == "1":
+        return {"status": "rejected", "order_id": request.order_id, "res_status": status}
+    return {"status": "outcome_unknown", "order_id": request.order_id}

@@ -4,9 +4,9 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
 from .config import Config
-from .models import CreateOrderInput, TrackInput
+from .models import CancelOrderInput, CreateOrderInput, TrackInput
 from .order_map import find_order_id, remember_created_order
-from .service import create_order, track_shipment
+from .service import cancel_order, create_order, track_shipment
 from .sf_api import SfApiClient, SfApiError
 
 
@@ -53,6 +53,22 @@ async def sf_track_shipment(query: TrackInput) -> dict:
         if order_id:
             result["order_id"] = order_id
         return result
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=False, idempotent_hint=False, open_world_hint=True))
+async def sf_cancel_order(request: CancelOrderInput) -> dict:
+    """Cancel an existing SF order by customer order ID. Show the order ID and obtain the user's confirmation first. A transport failure has an unknown outcome; do not retry automatically."""
+    try:
+        config = Config.from_env()
+        if config.environment == "production" and not config.can_create_order:
+            return {"status": "error", "error": {"kind": "configuration", "code": "PRODUCTION_DISABLED", "message": "Set SF_ALLOW_PRODUCTION_ORDERS=true to enable production cancellation"}}
+        return await cancel_order(_client(config), request)
+    except (SfApiError, ValueError) as exc:
+        if isinstance(exc, SfApiError):
+            error = {"kind": exc.kind, "code": exc.code, "message": "SF request failed; check the error code"}
+        else:
+            error = {"kind": "configuration", "code": "INVALID_CONFIG", "message": str(exc)}
+        return {"status": "error", "error": error}
 
 
 def main() -> None:

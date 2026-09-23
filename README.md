@@ -1,6 +1,12 @@
 # 顺丰速运 MCP 工具
 
-提供两个 AI Agent 可调用的 MCP 工具：`sf_create_order`（创建顺丰订单）和 `sf_track_shipment`（查询运单轨迹）。服务使用 stdio，由 MCP 客户端作为本地子进程启动。当前仅覆盖中国内地普通寄件；顺丰同城、国际件、退货、面单打印与批量下单不在范围内。
+提供三个 AI Agent 可调用的 MCP 工具：`sf_create_order`（创建顺丰订单）、`sf_track_shipment`（查询运单轨迹）和 `sf_cancel_order`（取消订单）。服务使用 stdio，由 MCP 客户端作为本地子进程启动。当前仅覆盖中国内地普通寄件；顺丰同城、国际件、退货、面单打印与批量下单不在范围内。
+
+## DSH 插件
+
+配套 [DSH 顺丰速运插件](dsh-plugin/README.md) 提供原生工具、设置页和基于极简模式的 Agent 预设。安装后在 **设置 → 顺丰速运** 分别配置沙盒/生产凭据，新建任务选择「顺丰速运」即可使用。客户订单号自动生成，运单对应关系保存 24 小时。
+
+MCP 取消工具接受 `{"request":{"order_id":"原客户订单号"}}`；生产取消与下单共用 `SF_ALLOW_PRODUCTION_ORDERS=true` 开关。取消接口为 `EXP_RECE_UPDATE_ORDER`（`dealType=2`）；只有明确返回成功才报告已取消，超时或不确定响应返回 `outcome_unknown`，不可自动重试。
 
 ## 依据与接入前提
 

@@ -72,3 +72,15 @@ class TrackInput(BaseModel):
         if not value:
             raise ValueError("must not be blank")
         return value
+
+
+class CancelOrderInput(BaseModel):
+    order_id: str = Field(min_length=1, max_length=64)
+
+    @field_validator("order_id")
+    @classmethod
+    def trim_order_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value

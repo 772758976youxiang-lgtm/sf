@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from sf_express_mcp.models import Cargo, Contact, CreateOrderInput, TrackInput
-from sf_express_mcp.service import create_order, track_shipment
+from sf_express_mcp.models import CancelOrderInput, Cargo, Contact, CreateOrderInput, TrackInput
+from sf_express_mcp.service import cancel_order, create_order, track_shipment
 from sf_express_mcp.sf_api import SfApiError, SfTransportError
 
 
@@ -93,3 +93,30 @@ def test_track_shipment_returns_empty_events():
     result = asyncio.run(track_shipment(client, TrackInput(tracking_type="waybill", tracking_number="SF123")))
     assert result["status"] == "no_events"
     assert result["latest"] is None
+
+
+def test_cancel_order_uses_update_api_and_requires_success_status():
+    client = FakeClient([{"orderId": "ORDER-1", "resStatus": 2}])
+    result = asyncio.run(cancel_order(client, CancelOrderInput(order_id=" ORDER-1 ")))
+    assert client.calls == [("EXP_RECE_UPDATE_ORDER", {"orderId": "ORDER-1", "dealType": 2})]
+    assert result == {"status": "cancelled", "order_id": "ORDER-1"}
+
+
+def test_cancel_order_reports_unknown_without_retrying():
+    client = FakeClient([SfTransportError("timeout")])
+    result = asyncio.run(cancel_order(client, CancelOrderInput(order_id="ORDER-1")))
+    assert result == {"status": "outcome_unknown", "order_id": "ORDER-1"}
+    assert len(client.calls) == 1
+
+
+def test_cancel_order_does_not_call_success_for_mismatch():
+    result = asyncio.run(cancel_order(FakeClient([{"orderId": "ORDER-1", "resStatus": 1}]), CancelOrderInput(order_id="ORDER-1")))
+    assert result == {"status": "rejected", "order_id": "ORDER-1", "res_status": 1}
+
+
+def test_cancel_order_does_not_confirm_ambiguous_response():
+    for response in ({}, {"resStatus": 2, "orderId": "OTHER-ORDER"}):
+        client = FakeClient([response])
+        result = asyncio.run(cancel_order(client, CancelOrderInput(order_id="ORDER-1")))
+        assert result == {"status": "outcome_unknown", "order_id": "ORDER-1"}
+        assert len(client.calls) == 1

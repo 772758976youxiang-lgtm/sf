@@ -1,0 +1,22 @@
+{
+  "name": "@local/dsh-sf-express",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SF Express order, tracking and cancellation tools for DeepSeek Harness",
+  "exports": {
+    ".": "./index.js",
+    "./tools": "./tools.js",
+    "./client": "./client.js"
+  },
+  "peerDependencies": { "@deepseek-ai/dsh": "0.1.7-rc.1" },
+  "peerDependenciesMeta": { "@deepseek-ai/dsh": { "optional": true } },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-api-remotes"]
+    }
+  }
+}

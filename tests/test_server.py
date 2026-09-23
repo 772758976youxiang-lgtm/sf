@@ -5,31 +5,31 @@ from mcp import Client, StdioServerParameters
 import pytest
 
 from sf_express_mcp.config import Config
-from sf_express_mcp.models import CreateOrderInput, TrackInput
-from sf_express_mcp.server import mcp, sf_create_order, sf_track_shipment
+from sf_express_mcp.models import CancelOrderInput, CreateOrderInput, TrackInput
+from sf_express_mcp.server import mcp, sf_cancel_order, sf_create_order, sf_track_shipment
 from sf_express_mcp.sf_api import SfApiError
 
 
-def test_mcp_lists_exactly_two_tools_without_credentials(monkeypatch):
+def test_mcp_lists_three_tools_without_credentials(monkeypatch):
     monkeypatch.delenv("SF_PARTNER_ID", raising=False)
     monkeypatch.delenv("SF_CHECK_WORD", raising=False)
 
     async def check():
         async with Client(mcp) as client:
             result = await client.list_tools()
-            assert {tool.name for tool in result.tools} == {"sf_create_order", "sf_track_shipment"}
+            assert {tool.name for tool in result.tools} == {"sf_create_order", "sf_track_shipment", "sf_cancel_order"}
             order = next(tool for tool in result.tools if tool.name == "sf_create_order")
             assert order.input_schema["properties"]["order"]
 
     asyncio.run(check())
 
 
-def test_stdio_process_lists_two_tools():
+def test_stdio_process_lists_three_tools():
     async def check():
         params = StdioServerParameters(command=sys.executable, args=["-m", "sf_express_mcp.server"])
         async with Client(params) as client:
             result = await client.list_tools()
-            assert {tool.name for tool in result.tools} == {"sf_create_order", "sf_track_shipment"}
+            assert {tool.name for tool in result.tools} == {"sf_create_order", "sf_track_shipment", "sf_cancel_order"}
 
     asyncio.run(check())
 
@@ -59,6 +59,16 @@ def test_production_order_requires_explicit_gate(monkeypatch):
     monkeypatch.delenv("SF_ALLOW_PRODUCTION_ORDERS", raising=False)
     config = Config.from_env()
     assert config.can_create_order is False
+
+
+def test_production_cancellation_requires_explicit_gate(monkeypatch):
+    monkeypatch.setenv("SF_PARTNER_ID", "partner")
+    monkeypatch.setenv("SF_CHECK_WORD", "secret")
+    monkeypatch.setenv("SF_ENV", "production")
+    monkeypatch.delenv("SF_ALLOW_PRODUCTION_ORDERS", raising=False)
+    monkeypatch.delenv("SF_API_URL", raising=False)
+    result = asyncio.run(sf_cancel_order(CancelOrderInput(order_id="ORDER-1")))
+    assert result["error"]["code"] == "PRODUCTION_DISABLED"
 
 
 def test_custom_endpoint_cannot_send_credentials_to_other_domain(monkeypatch):
